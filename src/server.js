@@ -11,6 +11,9 @@ const { connectDB } = require('./config/db')
 const authRoutes = require('./routes/auth')
 const categoryRoutes = require('./routes/categories')
 const progressRoutes = require('./routes/progress')
+const activityRoutes = require('./routes/activity')
+const reviewRoutes = require('./routes/review')
+const dailyProgressRoutes = require('./routes/dailyProgress')
 
 const app = express()
 
@@ -51,6 +54,9 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }))
 app.use('/api/auth', authRoutes)
 app.use('/api/categories', categoryRoutes)
 app.use('/api/progress', progressRoutes)
+app.use('/api/activity', activityRoutes)
+app.use('/api/review', reviewRoutes)
+app.use('/api/daily-progress', dailyProgressRoutes)
 
 app.use((req, res) => res.status(404).json({ message: 'Not found' }))
 

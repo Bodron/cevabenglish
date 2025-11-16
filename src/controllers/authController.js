@@ -77,8 +77,15 @@ async function refresh(req, res) {
     if (!user) {
       return res.status(401).json({ message: 'Unauthorized' })
     }
+    // Generate new tokens (best practice: rotate refresh token too)
     const newAccessToken = generateAccessToken(user._id)
-    return res.json({ accessToken: newAccessToken })
+    const newRefreshToken = generateRefreshToken(user._id)
+
+    return res.json({
+      user: { _id: user._id, username: user.username, email: user.email },
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+    })
   } catch {
     return res.status(401).json({ message: 'Unauthorized' })
   }

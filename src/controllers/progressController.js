@@ -1,5 +1,6 @@
 const UserWordProgress = require('../models/UserWordProgress')
 const WordCategory = require('../models/WordCategory')
+const DailyProgress = require('../models/DailyProgress')
 
 async function markLearnedBatch(req, res, next) {
   try {
@@ -81,4 +82,166 @@ async function listLearned(req, res, next) {
   }
 }
 
-module.exports = { markLearnedBatch, summaryByCategory, listLearned }
+/**
+ * Get activity days - returns list of dates when user had any activity
+ */
+async function getActivityDays(req, res, next) {
+  try {
+    const userId = req.user._id
+
+    // Get all unique dates from DailyProgress where user had any activity
+    const days = await DailyProgress.find(
+      {
+        user: userId,
+        $or: [
+          { learned: { $gt: 0 } },
+          { practiced: { $gt: 0 } },
+          { reviewed: { $gt: 0 } },
+        ],
+      },
+      'date'
+    )
+      .sort({ date: 1 })
+      .lean()
+
+    // Convert date strings to ISO format for Flutter
+    const dates = days.map((d) => `${d.date}T00:00:00.000Z`)
+
+    res.json({ data: dates })
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * Get review ready count - returns count of words that need review
+ */
+async function getReviewReadyCount(req, res, next) {
+  try {
+    const userId = req.user._id
+    const { countOnly } = req.query
+
+    // Words are ready for review if:
+    // 1. Status is 'learned'
+    // 2. lastSeenAt is older than 24 hours
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
+
+    if (countOnly === '1') {
+      const count = await UserWordProgress.countDocuments({
+        user: userId,
+        status: 'learned',
+        lastSeenAt: { $lt: oneDayAgo },
+      })
+      return res.json({ count })
+    }
+
+    // If not countOnly, return the actual words
+    const words = await UserWordProgress.find(
+      {
+        user: userId,
+        status: 'learned',
+        lastSeenAt: { $lt: oneDayAgo },
+      },
+      'category itemId english romanian lastSeenAt'
+    )
+      .sort({ lastSeenAt: 1 })
+      .limit(100)
+      .lean()
+
+    res.json({ data: words })
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * Get daily progress for a specific date
+ */
+async function getDailyProgress(req, res, next) {
+  try {
+    const userId = req.user._id
+    const { date } = req.query
+
+    if (!date) {
+      return res.status(400).json({ message: 'Date parameter required' })
+    }
+
+    // Validate date format YYYY-MM-DD
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ message: 'Invalid date format' })
+    }
+
+    const progress = await DailyProgress.findOne(
+      { user: userId, date },
+      'learned practiced reviewed'
+    ).lean()
+
+    const data = {
+      learned: progress?.learned || 0,
+      practiced: progress?.practiced || 0,
+      reviewed: progress?.reviewed || 0,
+    }
+
+    res.json({ data })
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * Increment daily progress counters
+ */
+async function incrementDailyProgress(req, res, next) {
+  try {
+    const userId = req.user._id
+    const {
+      date,
+      learnedDelta = 0,
+      practicedDelta = 0,
+      reviewedDelta = 0,
+    } = req.body
+
+    if (!date) {
+      return res.status(400).json({ message: 'Date parameter required' })
+    }
+
+    // Validate date format YYYY-MM-DD
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ message: 'Invalid date format' })
+    }
+
+    // Build increment update based on provided deltas
+    const inc = {}
+    if (learnedDelta > 0) inc.learned = learnedDelta
+    if (practicedDelta > 0) inc.practiced = practicedDelta
+    if (reviewedDelta > 0) inc.reviewed = reviewedDelta
+
+    // Only update if there are increments
+    if (Object.keys(inc).length === 0) {
+      return res.json({ ok: true })
+    }
+
+    await DailyProgress.findOneAndUpdate(
+      { user: userId, date },
+      { $inc: inc },
+      {
+        upsert: true,
+        new: true,
+      }
+    )
+
+    res.json({ ok: true })
+  } catch (err) {
+    next(err)
+  }
+}
+
+module.exports = {
+  markLearnedBatch,
+  summaryByCategory,
+  listLearned,
+  getActivityDays,
+  getReviewReadyCount,
+  getDailyProgress,
+  incrementDailyProgress,
+}
