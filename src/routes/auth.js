@@ -10,6 +10,9 @@ const {
   refresh,
   me,
   logout,
+  updateAvatar,
+  forgotPassword,
+  changePasswordWithToken,
 } = require('../controllers/authController')
 const { protect } = require('../middleware/auth')
 
@@ -30,5 +33,14 @@ router.post('/login', loginValidator, login)
 router.post('/refresh', refresh)
 router.get('/me', protect, me)
 router.post('/logout', logout)
+router.post('/forgot', forgotPassword)
+router.post('/change-password-temp', changePasswordWithToken)
+
+// Pentru upload avatar folosim raw body cu bytes (nu JSON).
+const avatarRaw = express.raw({
+  type: ['application/octet-stream', 'image/*'],
+  limit: '10mb',
+})
+router.put('/avatar', avatarRaw, protect, updateAvatar)
 
 module.exports = router

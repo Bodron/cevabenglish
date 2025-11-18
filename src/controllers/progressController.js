@@ -119,7 +119,7 @@ async function getActivityDays(req, res, next) {
 async function getReviewReadyCount(req, res, next) {
   try {
     const userId = req.user._id
-    const { countOnly } = req.query
+    const { countOnly, limit } = req.query
 
     // Words are ready for review if:
     // 1. Status is 'learned'
@@ -135,6 +135,8 @@ async function getReviewReadyCount(req, res, next) {
       return res.json({ count })
     }
 
+    const size = Math.min(Number(limit) || 100, 200)
+
     // If not countOnly, return the actual words
     const words = await UserWordProgress.find(
       {
@@ -145,7 +147,7 @@ async function getReviewReadyCount(req, res, next) {
       'category itemId english romanian lastSeenAt'
     )
       .sort({ lastSeenAt: 1 })
-      .limit(100)
+      .limit(size)
       .lean()
 
     res.json({ data: words })
@@ -236,6 +238,46 @@ async function incrementDailyProgress(req, res, next) {
   }
 }
 
+/**
+ * Mark a batch of words as reviewed now by bumping their lastSeenAt.
+ * This prevents the same words from being immediately selected again for review.
+ */
+async function markReviewedBatch(req, res, next) {
+  try {
+    const userId = req.user._id
+    const { items } = req.body || {}
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'Invalid payload' })
+    }
+
+    const ids = Array.from(
+      new Set(
+        items
+          .map((it) => String(it.itemId || it.id || ''))
+          .filter((id) => id && id !== 'undefined')
+      )
+    )
+
+    if (ids.length === 0) {
+      return res.json({ ok: true })
+    }
+
+    const ops = ids.map((itemId) => ({
+      updateMany: {
+        filter: { user: userId, itemId },
+        update: { $set: { lastSeenAt: new Date() } },
+      },
+    }))
+
+    await UserWordProgress.bulkWrite(ops, { ordered: false })
+
+    res.json({ ok: true })
+  } catch (err) {
+    next(err)
+  }
+}
+
 module.exports = {
   markLearnedBatch,
   summaryByCategory,
@@ -244,4 +286,5 @@ module.exports = {
   getReviewReadyCount,
   getDailyProgress,
   incrementDailyProgress,
+  markReviewedBatch,
 }

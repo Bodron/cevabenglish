@@ -26,6 +26,18 @@ const userSchema = new mongoose.Schema(
       minlength: 8,
       select: false,
     },
+    resetToken: {
+      type: String,
+      index: true,
+      sparse: true,
+    },
+    resetExpires: {
+      type: Date,
+    },
+    avatarUrl: {
+      type: String,
+      trim: true,
+    },
   },
   { timestamps: true }
 )

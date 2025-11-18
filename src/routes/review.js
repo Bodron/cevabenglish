@@ -1,7 +1,10 @@
 const express = require('express')
 const rateLimit = require('express-rate-limit')
 const { protect } = require('../middleware/auth')
-const { getReviewReadyCount } = require('../controllers/progressController')
+const {
+  getReviewReadyCount,
+  markReviewedBatch,
+} = require('../controllers/progressController')
 
 const router = express.Router()
 
@@ -16,5 +19,6 @@ router.use(limiter)
 router.use(protect)
 
 router.get('/ready', getReviewReadyCount)
+router.post('/complete', markReviewedBatch)
 
 module.exports = router
