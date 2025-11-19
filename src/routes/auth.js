@@ -13,6 +13,7 @@ const {
   updateAvatar,
   forgotPassword,
   changePasswordWithToken,
+  deleteAccount,
 } = require('../controllers/authController')
 const { protect } = require('../middleware/auth')
 
@@ -35,6 +36,7 @@ router.get('/me', protect, me)
 router.post('/logout', logout)
 router.post('/forgot', forgotPassword)
 router.post('/change-password-temp', changePasswordWithToken)
+router.delete('/delete-account', protect, deleteAccount)
 
 // Pentru upload avatar folosim raw body cu bytes (nu JSON).
 const avatarRaw = express.raw({

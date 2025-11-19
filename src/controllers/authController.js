@@ -114,10 +114,15 @@ async function login(req, res) {
 
   const { email, password } = req.body
   const user = await User.findOne({ email }).select(
-    '+password username email createdAt avatarUrl'
+    '+password username email createdAt avatarUrl disabled'
   )
   if (!user) {
     return res.status(401).json({ message: 'Invalid credentials' })
+  }
+  if (user.disabled) {
+    return res
+      .status(403)
+      .json({ message: 'This account has been deleted or disabled.' })
   }
 
   const valid = await user.comparePassword(password)
@@ -150,9 +155,9 @@ async function refresh(req, res) {
     const payload = verifyRefreshToken(refreshToken)
     const userId = payload.sub
     const user = await User.findById(userId).select(
-      '_id username email createdAt avatarUrl'
+      '_id username email createdAt avatarUrl disabled'
     )
-    if (!user) {
+    if (!user || user.disabled) {
       return res.status(401).json({ message: 'Unauthorized' })
     }
     // Generate new tokens (best practice: rotate refresh token too)
@@ -177,6 +182,30 @@ async function refresh(req, res) {
 
 async function me(req, res) {
   return res.json({ user: req.user })
+}
+
+// Soft-delete current user's account (used by in-app "Delete account" flow).
+// Marks the account as disabled so it can no longer be used to login or refresh.
+async function deleteAccount(req, res) {
+  try {
+    const userId = req.user && req.user._id
+    if (!userId) {
+      return res.status(401).json({ message: 'Unauthorized' })
+    }
+
+    await User.findByIdAndUpdate(userId, {
+      $set: { disabled: true },
+      $unset: { resetToken: 1, resetExpires: 1 },
+    })
+
+    return res.status(200).json({ message: 'Account deleted' })
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[auth/delete-account] error:', err)
+    return res
+      .status(500)
+      .json({ message: 'Failed to delete account. Please try again.' })
+  }
 }
 
 async function logout(req, res) {
@@ -240,8 +269,9 @@ async function forgotPassword(req, res) {
       (process.env.WEB_RESET_LINK_BASE || 'https://benglish.bcmenu.ro/reset') +
       `?token=${encodeURIComponent(token)}`
 
-    const info = await sendWithRetry({
-      from,
+    // Try sending email via CrackTheCode SMTP relay (server.crackthecodemultiplayer.com)
+    const relaySecret = process.env.CRACK_API_EMAIL_TOKEN || ''
+    const payload = JSON.stringify({
       to: email,
       subject: 'Resetare parolă Benglish',
       text: `Apasă pentru a reseta parola: ${webLink}`,
@@ -251,12 +281,51 @@ async function forgotPassword(req, res) {
       `,
     })
 
-    // eslint-disable-next-line no-console
-    console.log(
-      '[SMTP] sent reset email to %s messageId=%s',
-      email,
-      info?.messageId
-    )
+    await new Promise((resolve, reject) => {
+      const https = require('https')
+      const reqOptions = {
+        method: 'POST',
+        hostname: 'server.crackthecodemultiplayer.com',
+        path: '/api/auth/internal/send-email',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+          'x-internal-token': relaySecret,
+        },
+      }
+
+      const outReq = https.request(reqOptions, (outRes) => {
+        let data = ''
+        outRes.on('data', (chunk) => {
+          data += chunk
+        })
+        outRes.on('end', () => {
+          if (outRes.statusCode >= 200 && outRes.statusCode < 300) {
+            // eslint-disable-next-line no-console
+            console.log(
+              '[auth/forgot] email relayed via CrackTheCode status=%s body=%s',
+              outRes.statusCode,
+              data.slice(0, 200)
+            )
+            resolve()
+          } else {
+            const snippet = data.slice(0, 200)
+            reject(
+              new Error(
+                `Relay error status=${outRes.statusCode} body=${snippet}`
+              )
+            )
+          }
+        })
+      })
+
+      outReq.on('error', (err) => {
+        reject(err)
+      })
+
+      outReq.write(payload)
+      outReq.end()
+    })
 
     return res.json({
       message:
@@ -396,4 +465,5 @@ module.exports = {
   forgotPassword,
   changePasswordWithToken,
   updateAvatar,
+  deleteAccount,
 }

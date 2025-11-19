@@ -12,8 +12,10 @@ async function protect(req, res, next) {
 
     const payload = verifyAccessToken(token)
     const userId = payload.sub
-    const user = await User.findById(userId).select('_id username email')
-    if (!user) {
+    const user = await User.findById(userId).select(
+      '_id username email disabled'
+    )
+    if (!user || user.disabled) {
       return res.status(401).json({ message: 'Unauthorized' })
     }
 

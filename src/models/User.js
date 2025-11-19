@@ -38,6 +38,13 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    // Când un utilizator își șterge contul din aplicație,
+    // îl marcăm ca disabled pentru a bloca login-ul și refresh-ul.
+    disabled: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   { timestamps: true }
 )
