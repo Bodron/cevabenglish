@@ -9,9 +9,12 @@ const {
 
 const router = express.Router()
 
+// Pentru Benglish nu avem trafic masiv, așa că folosim un rate‑limit
+// foarte permisiv doar ca protecție teoretică. Astfel, utilizatorii
+// pot marca multe cuvinte ca „Știu deja” fără să mai primească 429.
 const limiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 120,
+  limit: 10000,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
 })

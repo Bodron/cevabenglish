@@ -25,9 +25,13 @@ if (process.env.NODE_ENV !== 'production') {
 
 app.set('trust proxy', 1)
 
+// Global rate‑limit foarte permisiv, doar ca protecție de bază.
+// Înainte era limit=200/15min și în testele de stres puteam primi 429.
+// Pentru Benglish (trafic mic, controlat) putem ridica limita foarte sus,
+// astfel încât utilizatorii să nu fie blocați nici dacă apasă rapid în app.
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 200,
+  limit: 10000,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
 })
@@ -48,10 +52,24 @@ app.use(helmet())
 app.use(mongoSanitize())
 app.use(hpp())
 
-const corsOrigins = (process.env.CORS_ORIGIN || '').split(',').filter(Boolean)
+const corsOriginsEnv = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .filter(Boolean)
+
+// În development nu ne mai batem capul: permitem orice origin (localhost:*, 127.0.0.1:*, etc),
+// ca să nu mai dea "Failed to fetch" din cauza CORS când testezi din admin / web.
+const corsOptions =
+  process.env.NODE_ENV !== 'production'
+    ? {
+        origin: true, // reflectă origin-ul care vine din browser
+      }
+    : {
+        origin: corsOriginsEnv.length > 0 ? corsOriginsEnv : undefined,
+      }
+
 app.use(
   cors({
-    origin: corsOrigins.length > 0 ? corsOrigins : undefined,
+    ...corsOptions,
     credentials: false,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],

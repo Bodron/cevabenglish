@@ -8,9 +8,10 @@ const {
 
 const router = express.Router()
 
+// Rate‑limit foarte permisiv pentru rutele de review.
 const limiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 120,
+  limit: 10000,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
 })
