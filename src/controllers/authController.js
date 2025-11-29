@@ -175,7 +175,7 @@ async function refresh(req, res) {
       accessToken: newAccessToken,
       refreshToken: newRefreshToken,
     })
-  } catch {
+  } catch (err) {
     return res.status(401).json({ message: 'Unauthorized' })
   }
 }

@@ -49,6 +49,15 @@ app.use(
 )
 
 app.use(helmet())
+
+// IMPORTANT:
+// Do NOT run mongoSanitize/hpp on auth routes, because they can strip
+// characters like "." from JWTs (refreshToken/accessToken) passed in the body,
+// which breaks verification and causes "jwt malformed".
+// Mount auth routes first, unsanitized:
+app.use('/api/auth', authRoutes)
+
+// Apply sanitizers only for the rest of the API.
 app.use(mongoSanitize())
 app.use(hpp())
 
@@ -112,7 +121,6 @@ app.get(['/link/reset', '/reset'], (req, res) => {
   }
 })
 
-app.use('/api/auth', authRoutes)
 app.use('/api/categories', categoryRoutes)
 app.use('/api/progress', progressRoutes)
 app.use('/api/activity', activityRoutes)
