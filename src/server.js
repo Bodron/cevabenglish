@@ -87,6 +87,42 @@ app.use(
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }))
 
+// Universal Links / App Links verification files
+// iOS: apple-app-site-association (must be served without .json extension)
+app.get('/.well-known/apple-app-site-association', (req, res) => {
+  res.setHeader('Content-Type', 'application/json')
+  res.json({
+    applinks: {
+      apps: [],
+      details: [
+        {
+          appID: 'TEAM_ID.benglish.app.com', // Replace TEAM_ID with your Apple Team ID
+          paths: ['/reset*', '/link/reset*'],
+        },
+      ],
+    },
+  })
+})
+
+// Android: assetlinks.json
+app.get('/.well-known/assetlinks.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json')
+  res.json([
+    {
+      relation: ['delegate_permission/common.handle_all_urls'],
+      target: {
+        namespace: 'android_app',
+        package_name: 'benglish.app.com',
+        // Replace with your actual SHA256 certificate fingerprint
+        // You can get it with: keytool -list -v -keystore your-keystore.jks
+        sha256_cert_fingerprints: [
+          'REPLACE_WITH_YOUR_SHA256_FINGERPRINT',
+        ],
+      },
+    },
+  ])
+})
+
 // Deep-link redirector: opens the app via custom scheme from an HTTPS link
 app.get(['/link/reset', '/reset'], (req, res) => {
   try {

@@ -26,7 +26,14 @@ const userWordProgressSchema = new mongoose.Schema(
       default: 'learned',
       index: true,
     },
+    source: {
+      type: String,
+      enum: ['known', 'learned'], // 'known' = Știu deja, 'learned' = Învățat
+      default: 'learned',
+      index: true,
+    },
     correctStreak: { type: Number, default: 0 },
+    difficultCount: { type: Number, default: 0, index: true },
     learnedAt: { type: Date, default: Date.now },
     lastSeenAt: { type: Date, default: Date.now },
   },

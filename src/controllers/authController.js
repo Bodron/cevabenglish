@@ -11,6 +11,7 @@ const {
   verifyRefreshToken,
 } = require('../utils/generateTokens')
 const nodemailer = require('nodemailer')
+const { OAuth2Client } = require('google-auth-library')
 
 function handleValidation(req, res) {
   const errors = validationResult(req)
@@ -456,6 +457,158 @@ async function updateAvatar(req, res) {
   }
 }
 
+// Creează client OAuth
+// IMPORTANT: Verifică că variabilele de mediu sunt setate
+const googleClientId = process.env.GOOGLE_CLIENT_ID
+const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET
+const googleRedirectUri =
+  process.env.GOOGLE_REDIRECT_URI ||
+  'http://localhost:5001/api/auth/google/callback'
+
+if (!googleClientId) {
+  console.error(
+    '[OAuth] ⚠️ GOOGLE_CLIENT_ID nu este setat în .env! OAuth nu va funcționa.'
+  )
+}
+
+if (!googleClientSecret) {
+  console.warn(
+    '[OAuth] ⚠️ GOOGLE_CLIENT_SECRET nu este setat în .env! OAuth poate să nu funcționeze corect.'
+  )
+}
+
+const googleClient = new OAuth2Client(
+  googleClientId,
+  googleClientSecret,
+  googleRedirectUri
+)
+
+// Generează URL-ul pentru OAuth și face redirect
+async function startGoogleOAuth(req, res) {
+  try {
+    if (!googleClientId) {
+      return res.status(500).json({
+        message:
+          'Google OAuth nu este configurat. GOOGLE_CLIENT_ID lipsește din .env',
+      })
+    }
+
+    console.log('[startGoogleOAuth] Client ID:', googleClientId)
+    console.log('[startGoogleOAuth] Redirect URI:', googleRedirectUri)
+
+    const redirectUrl = googleClient.generateAuthUrl({
+      access_type: 'offline',
+      scope: ['email', 'profile'],
+      prompt: 'consent',
+    })
+
+    console.log('[startGoogleOAuth] Generated URL:', redirectUrl)
+
+    // Redirect către Google
+    res.redirect(redirectUrl)
+  } catch (error) {
+    console.error('[startGoogleOAuth] Error:', error)
+    return res.status(500).json({ message: 'Failed to start OAuth flow' })
+  }
+}
+
+// Callback de la Google - primește code, schimbă pentru tokens
+async function handleGoogleCallback(req, res) {
+  try {
+    const { code, error } = req.query
+
+    if (error) {
+      return res.redirect(`benglish://auth?error=${encodeURIComponent(error)}`)
+    }
+
+    if (!code) {
+      return res.redirect('benglish://auth?error=no_code')
+    }
+
+    // Schimbă code-ul pentru tokens
+    const { tokens } = await googleClient.getToken(code)
+    googleClient.setCredentials(tokens)
+
+    // Obține informații despre user
+    const ticket = await googleClient.verifyIdToken({
+      idToken: tokens.id_token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    })
+
+    const payload = ticket.getPayload()
+    const { sub: googleId, email, name, picture } = payload
+
+    if (!email) {
+      return res.redirect('benglish://auth?error=no_email')
+    }
+
+    // Caută user existent după googleId sau email
+    let user = await User.findOne({
+      $or: [{ googleId }, { email: email.toLowerCase() }],
+    })
+
+    if (user) {
+      // User existent - actualizează datele dacă e nevoie
+      if (!user.googleId) {
+        user.googleId = googleId
+        user.googleEmail = email.toLowerCase()
+        if (picture && !user.avatarUrl) {
+          user.avatarUrl = picture
+        }
+        await user.save()
+      }
+    } else {
+      // User nou - creează cont
+      // Generează username din email dacă nu avem name
+      const baseUsername = name
+        ? name.toLowerCase().replace(/\s+/g, '_').substring(0, 20)
+        : email.split('@')[0].substring(0, 20)
+
+      // Asigură-te că username-ul este unic
+      let username = baseUsername
+      let counter = 1
+      while (await User.findOne({ username })) {
+        username = `${baseUsername}_${counter}`
+        counter++
+      }
+
+      user = new User({
+        username,
+        email: email.toLowerCase(),
+        googleId,
+        googleEmail: email.toLowerCase(),
+        avatarUrl: picture || null,
+        // Nu setăm password pentru user Google
+      })
+
+      await user.save()
+    }
+
+    if (user.disabled) {
+      return res.redirect('benglish://auth?error=account_disabled')
+    }
+
+    const accessToken = generateAccessToken(user._id)
+    const refreshToken = generateRefreshToken(user._id)
+
+    // Redirect către Flutter cu tokens
+    const redirectUrl = `benglish://auth?accessToken=${encodeURIComponent(
+      accessToken
+    )}&refreshToken=${encodeURIComponent(
+      refreshToken
+    )}&userId=${encodeURIComponent(
+      user._id.toString()
+    )}&username=${encodeURIComponent(user.username)}&email=${encodeURIComponent(
+      user.email
+    )}`
+
+    res.redirect(redirectUrl)
+  } catch (error) {
+    console.error('[handleGoogleCallback] Error:', error)
+    return res.redirect('benglish://auth?error=server_error')
+  }
+}
+
 module.exports = {
   register,
   login,
@@ -466,4 +619,6 @@ module.exports = {
   changePasswordWithToken,
   updateAvatar,
   deleteAccount,
+  startGoogleOAuth,
+  handleGoogleCallback,
 }

@@ -5,6 +5,8 @@ const {
   markLearnedBatch,
   summaryByCategory,
   listLearned,
+  getDifficultCount,
+  markWrongAnswer,
 } = require('../controllers/progressController')
 
 const router = express.Router()
@@ -25,5 +27,7 @@ router.use(protect)
 router.post('/learn', markLearnedBatch)
 router.get('/summary', summaryByCategory)
 router.get('/learned', listLearned)
+router.get('/difficult-count', getDifficultCount)
+router.post('/wrong-answer', markWrongAnswer)
 
 module.exports = router

@@ -14,6 +14,8 @@ const {
   forgotPassword,
   changePasswordWithToken,
   deleteAccount,
+  startGoogleOAuth,
+  handleGoogleCallback,
 } = require('../controllers/authController')
 const { protect } = require('../middleware/auth')
 
@@ -31,6 +33,8 @@ router.use(authLimiter)
 
 router.post('/register', registerValidator, register)
 router.post('/login', loginValidator, login)
+router.get('/google/start', startGoogleOAuth)
+router.get('/google/callback', handleGoogleCallback)
 router.post('/refresh', refresh)
 router.get('/me', protect, me)
 router.post('/logout', logout)

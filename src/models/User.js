@@ -7,11 +7,15 @@ const userSchema = new mongoose.Schema(
   {
     username: {
       type: String,
-      required: true,
+      required: function () {
+        // Username este obligatoriu doar dacă nu e login cu Google
+        return !this.googleId
+      },
       trim: true,
       minlength: 3,
       maxlength: 30,
       unique: true,
+      sparse: true, // Permite null, dar dacă există, trebuie să fie unic
     },
     email: {
       type: String,
@@ -22,9 +26,24 @@ const userSchema = new mongoose.Schema(
     },
     password: {
       type: String,
-      required: true,
+      required: function () {
+        // Parola este obligatorie doar dacă nu e login cu Google
+        return !this.googleId
+      },
       minlength: 8,
       select: false,
+    },
+    // Adăugăm câmpuri pentru Google OAuth
+    googleId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
+    googleEmail: {
+      type: String,
+      trim: true,
+      lowercase: true,
     },
     resetToken: {
       type: String,
@@ -50,6 +69,10 @@ const userSchema = new mongoose.Schema(
 )
 
 userSchema.pre('save', async function preSave(next) {
+  // Dacă e user Google și nu are parolă, skip
+  if (this.googleId && !this.password) {
+    return next()
+  }
   if (!this.isModified('password')) {
     return next()
   }

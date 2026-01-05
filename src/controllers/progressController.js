@@ -5,7 +5,16 @@ const DailyProgress = require('../models/DailyProgress')
 async function markLearnedBatch(req, res, next) {
   try {
     const userId = req.user._id
-    const { categoryId, items } = req.body || {}
+    const { categoryId, items, source = 'learned' } = req.body || {}
+    // source: 'known' pentru "Știu deja", 'learned' pentru "Învățat"
+
+    console.log('[markLearnedBatch] Received:', {
+      userId: userId.toString(),
+      categoryId,
+      itemsCount: items?.length || 0,
+      source, // Log source-ul primit
+    })
+
     if (!categoryId || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: 'Invalid payload' })
     }
@@ -34,7 +43,11 @@ async function markLearnedBatch(req, res, next) {
           filter: { user: userId, category: categoryId, itemId: idStr },
           update: {
             $setOnInsert: { english, romanian, learnedAt: new Date() },
-            $set: { status: 'learned', lastSeenAt: new Date() },
+            $set: {
+              status: 'learned',
+              source: source, // Adăugăm source aici
+              lastSeenAt: new Date(),
+            },
             $inc: { correctStreak: 1 },
           },
           upsert: true,
@@ -42,9 +55,26 @@ async function markLearnedBatch(req, res, next) {
       }
     })
 
+    console.log(
+      '[markLearnedBatch] Will update with source:',
+      source,
+      'for',
+      ops.length,
+      'items'
+    )
+
     await UserWordProgress.bulkWrite(ops, { ordered: false })
+
+    console.log(
+      '[markLearnedBatch] Successfully marked',
+      ops.length,
+      'items with source:',
+      source
+    )
+
     res.json({ ok: true })
   } catch (err) {
+    console.error('[markLearnedBatch] Error:', err)
     next(err)
   }
 }
@@ -52,12 +82,39 @@ async function markLearnedBatch(req, res, next) {
 async function summaryByCategory(req, res, next) {
   try {
     const userId = req.user._id
+    // Pentru "Știu deja" - numără cuvintele cu source: 'known' SAU fără source (cuvintele vechi)
+    const query = {
+      user: userId,
+      status: 'learned',
+      $or: [
+        { source: 'known' },
+        { source: { $exists: false } },
+        { source: null },
+      ],
+    }
+
+    console.log(
+      '[summaryByCategory] Query for "Știu deja":',
+      JSON.stringify(query)
+    )
+
     const data = await UserWordProgress.aggregate([
-      { $match: { user: userId, status: 'learned' } },
+      { $match: query },
       { $group: { _id: '$category', learned: { $sum: 1 } } },
     ])
+
+    const total = data.reduce((sum, item) => sum + item.learned, 0)
+    console.log(
+      '[summaryByCategory] Found',
+      total,
+      'words for "Știu deja" across',
+      data.length,
+      'categories'
+    )
+
     res.json({ data })
   } catch (err) {
+    console.error('[summaryByCategory] Error:', err)
     next(err)
   }
 }
@@ -121,37 +178,119 @@ async function getReviewReadyCount(req, res, next) {
     const userId = req.user._id
     const { countOnly, limit } = req.query
 
+    console.log(
+      '[getReviewReadyCount] Request from user:',
+      userId.toString(),
+      'countOnly:',
+      countOnly
+    )
+
     // Words are ready for review if:
     // 1. Status is 'learned'
-    // 2. lastSeenAt is older than 24 hours
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    // 2. Source is 'learned' (nu 'known' - cele marcate ca "Știu deja")
+    // NU mai avem condiția de 24 ore - cuvintele învățate apar imediat la "Repetare"
 
     if (countOnly === '1') {
-      const count = await UserWordProgress.countDocuments({
+      const query = {
         user: userId,
         status: 'learned',
-        lastSeenAt: { $lt: oneDayAgo },
-      })
-      return res.json({ count })
+        source: 'learned', // DOAR cele cu source: 'learned', nu cele fără source
+      }
+      console.log('[getReviewReadyCount] Count query:', JSON.stringify(query))
+
+      const count = await UserWordProgress.countDocuments(query)
+
+      console.log('[getReviewReadyCount] Found count:', count)
+
+      return res.json({ data: { count } })
     }
 
-    const size = Math.min(Number(limit) || 100, 200)
+    const targetSize = 20 // Target: 20 cuvinte pentru sesiune
+    const maxSize = Math.min(Number(limit) || 100, 200)
 
-    // If not countOnly, return the actual words
-    const words = await UserWordProgress.find(
-      {
+    // Pasul 1: Ia cuvintele cu source: 'learned' (prioritizând cele dificil)
+    const learnedQuery = {
+      user: userId,
+      status: 'learned',
+      source: 'learned', // DOAR cele cu source: 'learned'
+    }
+
+    console.log(
+      '[getReviewReadyCount] Find query for "learned":',
+      JSON.stringify(learnedQuery)
+    )
+
+    let words = await UserWordProgress.find(
+      learnedQuery,
+      'category itemId english romanian lastSeenAt difficultCount source'
+    )
+      .sort({ difficultCount: -1, lastSeenAt: 1 }) // Dificil primul, apoi cele mai vechi
+      .limit(maxSize)
+      .lean()
+
+    console.log(
+      '[getReviewReadyCount] Found',
+      words.length,
+      'words with source: "learned"'
+    )
+
+    // Pasul 2: Dacă nu sunt suficiente, completează cu cuvinte de la "Știu deja"
+    if (words.length < targetSize) {
+      const needed = targetSize - words.length
+      const knownQuery = {
         user: userId,
         status: 'learned',
-        lastSeenAt: { $lt: oneDayAgo },
-      },
-      'category itemId english romanian lastSeenAt'
+        $or: [
+          { source: 'known' },
+          { source: { $exists: false } },
+          { source: null },
+        ],
+        // Exclude cuvintele deja adăugate
+        itemId: { $nin: words.map((w) => w.itemId) },
+      }
+
+      console.log(
+        '[getReviewReadyCount] Need',
+        needed,
+        'more words, fetching from "Știu deja"'
+      )
+
+      const knownWords = await UserWordProgress.find(
+        knownQuery,
+        'category itemId english romanian lastSeenAt difficultCount source'
+      )
+        .sort({ lastSeenAt: 1 }) // Cele mai vechi primul
+        .limit(needed)
+        .lean()
+
+      console.log(
+        '[getReviewReadyCount] Found',
+        knownWords.length,
+        'words from "Știu deja" to complete'
+      )
+
+      words = [...words, ...knownWords]
+    }
+
+    // Limitează la targetSize (20) sau maxSize
+    words = words.slice(0, Math.min(targetSize, maxSize))
+
+    console.log(
+      '[getReviewReadyCount] Final result:',
+      words.length,
+      'words for review'
     )
-      .sort({ lastSeenAt: 1 })
-      .limit(size)
-      .lean()
+    if (words.length > 0) {
+      console.log('[getReviewReadyCount] First word sample:', {
+        itemId: words[0].itemId,
+        source: words[0].source,
+        difficultCount: words[0].difficultCount,
+      })
+    }
 
     res.json({ data: words })
   } catch (err) {
+    console.error('[getReviewReadyCount] Error:', err)
     next(err)
   }
 }
@@ -278,6 +417,46 @@ async function markReviewedBatch(req, res, next) {
   }
 }
 
+/**
+ * Get difficult words count - returns count of words with difficultCount >= 2
+ */
+async function getDifficultCount(req, res, next) {
+  try {
+    const userId = req.user._id
+    // Cuvinte dificil = cuvinte cu difficultCount >= 2
+    const count = await UserWordProgress.countDocuments({
+      user: userId,
+      difficultCount: { $gte: 2 },
+    })
+    res.json({ data: { count } })
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * Mark a word as having a wrong answer - increments difficultCount
+ */
+async function markWrongAnswer(req, res, next) {
+  try {
+    const userId = req.user._id
+    const { categoryId, itemId } = req.body || {}
+    if (!categoryId || !itemId) {
+      return res.status(400).json({ message: 'Invalid payload' })
+    }
+
+    await UserWordProgress.findOneAndUpdate(
+      { user: userId, category: categoryId, itemId: String(itemId) },
+      { $inc: { difficultCount: 1 } },
+      { upsert: false } // Nu creăm dacă nu există
+    )
+
+    res.json({ ok: true })
+  } catch (err) {
+    next(err)
+  }
+}
+
 module.exports = {
   markLearnedBatch,
   summaryByCategory,
@@ -287,4 +466,6 @@ module.exports = {
   getDailyProgress,
   incrementDailyProgress,
   markReviewedBatch,
+  getDifficultCount,
+  markWrongAnswer,
 }
