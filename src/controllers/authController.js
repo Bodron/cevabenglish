@@ -512,17 +512,55 @@ async function startGoogleOAuth(req, res) {
   }
 }
 
+// Helper function to detect mobile and return HTML redirect
+function sendMobileRedirect(res, deepLink) {
+  return res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Redirecting...</title>
+      <meta http-equiv="refresh" content="0;url=${deepLink}">
+      <script>
+        setTimeout(function() {
+          window.location.href = '${deepLink}';
+        }, 100);
+      </script>
+    </head>
+    <body>
+      <p>Redirecting to app...</p>
+      <script>
+        window.location.href = '${deepLink}';
+      </script>
+    </body>
+    </html>
+  `)
+}
+
 // Callback de la Google - primește code, schimbă pentru tokens
 async function handleGoogleCallback(req, res) {
   try {
     const { code, error } = req.query
 
+    // Detect mobile early
+    const userAgent = req.get('user-agent') || ''
+    const isMobile = /mobile|android|iphone|ipad|flutter/i.test(userAgent)
+    const host = req.get('host') || ''
+    const isMobileEmulator = host.includes('10.0.2.2') || isMobile
+
     if (error) {
-      return res.redirect(`benglish://auth?error=${encodeURIComponent(error)}`)
+      const deepLink = `benglish://auth/callback?error=${encodeURIComponent(error)}`
+      if (isMobileEmulator) {
+        return sendMobileRedirect(res, deepLink)
+      }
+      return res.redirect(deepLink)
     }
 
     if (!code) {
-      return res.redirect('benglish://auth?error=no_code')
+      const deepLink = 'benglish://auth/callback?error=no_code'
+      if (isMobileEmulator) {
+        return sendMobileRedirect(res, deepLink)
+      }
+      return res.redirect(deepLink)
     }
 
     // Schimbă code-ul pentru tokens
@@ -539,7 +577,11 @@ async function handleGoogleCallback(req, res) {
     const { sub: googleId, email, name, picture } = payload
 
     if (!email) {
-      return res.redirect('benglish://auth?error=no_email')
+      const deepLink = 'benglish://auth/callback?error=no_email'
+      if (isMobileEmulator) {
+        return sendMobileRedirect(res, deepLink)
+      }
+      return res.redirect(deepLink)
     }
 
     // Caută user existent după googleId sau email
@@ -585,14 +627,18 @@ async function handleGoogleCallback(req, res) {
     }
 
     if (user.disabled) {
-      return res.redirect('benglish://auth?error=account_disabled')
+      const deepLink = 'benglish://auth/callback?error=account_disabled'
+      if (isMobileEmulator) {
+        return sendMobileRedirect(res, deepLink)
+      }
+      return res.redirect(deepLink)
     }
 
     const accessToken = generateAccessToken(user._id)
     const refreshToken = generateRefreshToken(user._id)
 
-    // Redirect către Flutter cu tokens
-    const redirectUrl = `benglish://auth?accessToken=${encodeURIComponent(
+    // Redirect către Flutter cu tokens - folosim /callback path
+    const deepLink = `benglish://auth/callback?accessToken=${encodeURIComponent(
       accessToken
     )}&refreshToken=${encodeURIComponent(
       refreshToken
@@ -600,12 +646,28 @@ async function handleGoogleCallback(req, res) {
       user._id.toString()
     )}&username=${encodeURIComponent(user.username)}&email=${encodeURIComponent(
       user.email
-    )}`
+    )}${user.avatarUrl ? `&avatarUrl=${encodeURIComponent(user.avatarUrl)}` : ''}`
 
-    res.redirect(redirectUrl)
+    if (isMobileEmulator) {
+      // For mobile, return HTML page that redirects to deep link
+      // This works because Android will intercept benglish:// scheme
+      return sendMobileRedirect(res, deepLink)
+    }
+
+    // For web, redirect normally
+    res.redirect(deepLink)
   } catch (error) {
     console.error('[handleGoogleCallback] Error:', error)
-    return res.redirect('benglish://auth?error=server_error')
+    const userAgent = req.get('user-agent') || ''
+    const isMobile = /mobile|android|iphone|ipad|flutter/i.test(userAgent)
+    const host = req.get('host') || ''
+    const isMobileEmulator = host.includes('10.0.2.2') || isMobile
+
+    const deepLink = 'benglish://auth/callback?error=server_error'
+    if (isMobileEmulator) {
+      return sendMobileRedirect(res, deepLink)
+    }
+    return res.redirect(deepLink)
   }
 }
 
